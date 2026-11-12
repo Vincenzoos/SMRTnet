@@ -565,8 +565,6 @@ def run_strategy(parsed):
         "global_window_class_counts": parsed.global_window_class_counts,
         "inherited_global_positive_class_weight": global_class_weight,
         "excluded_rows": manifest["excluded_rows"],
-        "benchmark_metrics_complete": False,
-        "note": "Use the Thesis A comparison CLI after five-fold predictions are complete.",
     }
     with open(run_dir / "summary.json", "w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2, sort_keys=True)
