@@ -19,6 +19,9 @@ from functools import partial
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cuda')
 
+DNA_WINDOW_SIZE = 31
+DNA_HIDDEN_SIZE = 1024
+
 
 class AttentionBlock(nn.Module):
     """ A class for attention mechanisn with QKV attention """
@@ -204,6 +207,13 @@ class ResidualBlock2D(nn.Module):
 
 
 class SmrtNet(nn.Module):
+    """SMRTnet with its RNA path or the isolated DNA-state adaptation.
+
+    In DNA adaptation, ``dna_embeddings`` has shape ``[B, 31, 1024]``: ``B`` is the
+    number of pair windows in the batch, 31 is the DNA window width, and 1024 is the frozen
+    GB.DNA token-state width. The trainable bridge projects these states into the original
+    640-wide per-position input and retains the existing 128-wide fusion representation.
+    """
 
     def __init__(self, args):
         super(SmrtNet, self).__init__()
@@ -255,23 +265,31 @@ class SmrtNet(nn.Module):
         self.transform = nn.Linear(self.gnn.hidden_feats[-1] * 2 * self.gnn.num_heads[-1], args.hidden_dim_graph)
 
     
-        ## pretrained RNA model
+        ## pretrained RNA model or the narrow frozen-DNA-state bridge
 
-        self.mid_dim_bert = 768
-        configuration_pretrain = EsmConfig.from_pretrained(args.lm_rna_config)
+        self.dna_adaptation = bool(getattr(args, 'dna_adaptation', False))
+        if self.dna_adaptation:
+            self.pretrain_bert = None
+            self.dna_projection = nn.Linear(DNA_HIDDEN_SIZE, 640)
+        else:
+            self.mid_dim_bert = 768
+            configuration_pretrain = EsmConfig.from_pretrained(args.lm_rna_config)
 
-        self.pretrain_bert = pretrain_bert(configuration_pretrain)
+            self.pretrain_bert = pretrain_bert(configuration_pretrain)
 
-        dict_para_pretrain = torch.load(args.lm_rna_model, map_location=torch.device('cuda:'+str(args.cuda)))
+            dict_para_pretrain = torch.load(
+                args.lm_rna_model,
+                map_location=torch.device('cuda:' + str(args.cuda)),
+            )
 
-        for name_, para_ in self.pretrain_bert.state_dict().items():
-            if 'esm.' + name_ in dict_para_pretrain.keys():
-                self.pretrain_bert.state_dict()[name_].copy_(dict_para_pretrain['esm.' + name_])
-        for para in self.pretrain_bert.parameters():
-            if 'rnalm' in args.lm_ft:
-                para.requires_grad = True
-            else:
-                para.requires_grad = False
+            for name_, para_ in self.pretrain_bert.state_dict().items():
+                if 'esm.' + name_ in dict_para_pretrain.keys():
+                    self.pretrain_bert.state_dict()[name_].copy_(dict_para_pretrain['esm.' + name_])
+            for para in self.pretrain_bert.parameters():
+                if 'rnalm' in args.lm_ft:
+                    para.requires_grad = True
+                else:
+                    para.requires_grad = False
 
         self.mlp_l1 = nn.Linear(640, 512)
         self.mlp_l2 = nn.Linear(512, 128)
@@ -293,7 +311,8 @@ class SmrtNet(nn.Module):
         ###dropout
         self.dropout = nn.Dropout(0.1)
 
-        tokenizer = MolTranBertTokenizer('./LM_Mol/bert_vocab.txt')
+        tokenizer_path = getattr(args, 'lm_mol_config', './LM_Mol/bert_vocab.txt')
+        tokenizer = MolTranBertTokenizer(tokenizer_path)
         n_vocab = len(tokenizer.vocab)
         self.tok_emb = nn.Embedding(n_vocab, 768)
         self.drop_molformer = nn.Dropout(0.1)
@@ -358,7 +377,17 @@ class SmrtNet(nn.Module):
         ###Fully-connected
         self.fc = nn.ModuleList([nn.Linear(dims[i], dims[i + 1]) for i in range(layer_size)])
 
-    def forward(self, v_D, de_idx, de_mask, v_P, re_input_ids, re_atten_mask, get_attention=False):
+    def forward(
+        self,
+        v_D,
+        de_idx,
+        de_mask,
+        v_P,
+        re_input_ids=None,
+        re_atten_mask=None,
+        get_attention=False,
+        dna_embeddings=None,
+    ):
 
         feats = v_D.ndata['h']
         node_feats = self.gnn(v_D, feats)
@@ -382,16 +411,32 @@ class SmrtNet(nn.Module):
         v_De = v_De.view(v_De.shape[0], v_De.shape[2] * v_De.shape[1]) 
         v_De = F.dropout(self.mlp_d2(v_De), 0.1, training=self.training)
 
-        v_Pe, v_Pe_embeddings = self.pretrain_bert(**{'input_ids': re_input_ids.long(), 'attention_mask':re_atten_mask})
-        if get_attention:
-            v_Pe_embeddings.retain_grad()
+        if self.dna_adaptation:
+            if dna_embeddings is None:
+                raise ValueError('DNA adaptation requires precomputed GB.DNA token states')
+            if dna_embeddings.ndim != 3 or tuple(dna_embeddings.shape[1:]) != (
+                DNA_WINDOW_SIZE,
+                DNA_HIDDEN_SIZE,
+            ):
+                raise ValueError(
+                    'GB.DNA token states must have shape [B, 31, 1024], got '
+                    + str(tuple(dna_embeddings.shape))
+                )
+            v_Pe_embeddings = dna_embeddings
+            v_Pe = self.dna_projection(dna_embeddings.float())
+        else:
+            v_Pe, v_Pe_embeddings = self.pretrain_bert(
+                **{'input_ids': re_input_ids.long(), 'attention_mask': re_atten_mask}
+            )
+            if get_attention and v_Pe_embeddings.requires_grad:
+                v_Pe_embeddings.retain_grad()
 
-        try:
-            v_Pe = v_Pe.last_hidden_state
-        except:
-            exit('Invalid transformers packages, please install packages via "pip install smrtnet" or '+ \
-                '"cp ./env/modeling_esm.py $CONDA_PREFIX/lib/python3.8/site-packages/transformers/models/esm/modeling_esm.py". ')
-        v_Pe = v_Pe[:, 1:, :]
+            try:
+                v_Pe = v_Pe.last_hidden_state
+            except Exception:
+                exit('Invalid transformers packages, please install packages via "pip install smrtnet" or '+ \
+                    '"cp ./env/modeling_esm.py $CONDA_PREFIX/lib/python3.8/site-packages/transformers/models/esm/modeling_esm.py". ')
+            v_Pe = v_Pe[:, 1:, :]
 
         v_Pe = F.dropout(self.mlp_l1(v_Pe), 0.3, training=self.training)
         v_Pe = F.dropout(self.mlp_l2(v_Pe), 0.1, training=self.training) 

@@ -517,7 +517,7 @@ def show_delta(results_median_list,results_median_final, smiles, sequence, struc
         print("\n")
 
 
-def rna_slice(inputPath, step):
+def rna_slice(inputPath, step, dna=False):
     inputPath_fa = os.path.splitext(inputPath)[0]+'.fa'
     with open(inputPath) as f:
         line = f.readline()
@@ -548,7 +548,9 @@ def rna_slice(inputPath, step):
             if i%3==0:
                 name = line.strip().replace('>','')
             elif i%3==1:
-                sequences = line.strip().upper().replace('T','U')
+                sequences = line.strip().upper()
+                if not dna:
+                    sequences = sequences.replace('T','U')
             else:
                 structures = line.strip()
 

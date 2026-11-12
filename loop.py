@@ -37,10 +37,19 @@ def train(args, model, device, train_loader, optimizer, criterion, epoch):
         optimizer.zero_grad()
         de_idx = torch.tensor(train_de['input_ids']).to(device)
         de_mask = torch.tensor(train_de['attention_mask']).to(device)
-        train_re = {k: v.to(device) for k, v in train_re.items() if k in ['input_ids', 'attention_mask']}
-        re_atten_mask = train_re['attention_mask']
-        re_input_ids = train_re['input_ids']
-        train_output = model(train_ds, de_idx, de_mask, train_rs, re_input_ids, re_atten_mask)
+        if getattr(args, 'dna_adaptation', False):
+            train_output = model(
+                train_ds,
+                de_idx,
+                de_mask,
+                train_rs,
+                dna_embeddings=train_re.to(device),
+            )
+        else:
+            train_re = {k: v.to(device) for k, v in train_re.items() if k in ['input_ids', 'attention_mask']}
+            re_atten_mask = train_re['attention_mask']
+            re_input_ids = train_re['input_ids']
+            train_output = model(train_ds, de_idx, de_mask, train_rs, re_input_ids, re_atten_mask)
         train_prob = torch.sigmoid(train_output)
         train_output = torch.squeeze(train_output, 1)
         train_loss = criterion(train_output, train_y)
@@ -70,10 +79,19 @@ def valid(args, model, device, valid_loader, criterion, epoch):
             valid_y = Variable(torch.from_numpy(np.array(valid_y)).float()).to(device)
             de_idx = torch.tensor(valid_de['input_ids']).to(device)
             de_mask = torch.tensor(valid_de['attention_mask']).to(device)
-            valid_re = {k: v.to(device) for k, v in valid_re.items() if k in ['input_ids', 'attention_mask']}
-            re_atten_mask = valid_re['attention_mask']
-            re_input_ids = valid_re['input_ids']
-            valid_output = model(valid_ds, de_idx, de_mask, valid_rs, re_input_ids, re_atten_mask)
+            if getattr(args, 'dna_adaptation', False):
+                valid_output = model(
+                    valid_ds,
+                    de_idx,
+                    de_mask,
+                    valid_rs,
+                    dna_embeddings=valid_re.to(device),
+                )
+            else:
+                valid_re = {k: v.to(device) for k, v in valid_re.items() if k in ['input_ids', 'attention_mask']}
+                re_atten_mask = valid_re['attention_mask']
+                re_input_ids = valid_re['input_ids']
+                valid_output = model(valid_ds, de_idx, de_mask, valid_rs, re_input_ids, re_atten_mask)
             valid_prob = torch.sigmoid(valid_output)
             valid_output = torch.squeeze(valid_output, 1)
             valid_loss = criterion(valid_output, valid_y)
@@ -105,10 +123,19 @@ def test(args, model, device, valid_loader, criterion):
             valid_y = Variable(torch.from_numpy(np.array(valid_y)).float()).to(device)
             de_idx = torch.tensor(valid_de['input_ids']).to(device)
             de_mask = torch.tensor(valid_de['attention_mask']).to(device)
-            valid_re = {k: v.to(device) for k, v in valid_re.items() if k in ['input_ids', 'attention_mask']}
-            re_atten_mask = valid_re['attention_mask']
-            re_input_ids = valid_re['input_ids']
-            valid_output = model(valid_ds, de_idx, de_mask, valid_rs, re_input_ids, re_atten_mask)
+            if getattr(args, 'dna_adaptation', False):
+                valid_output = model(
+                    valid_ds,
+                    de_idx,
+                    de_mask,
+                    valid_rs,
+                    dna_embeddings=valid_re.to(device),
+                )
+            else:
+                valid_re = {k: v.to(device) for k, v in valid_re.items() if k in ['input_ids', 'attention_mask']}
+                re_atten_mask = valid_re['attention_mask']
+                re_input_ids = valid_re['input_ids']
+                valid_output = model(valid_ds, de_idx, de_mask, valid_rs, re_input_ids, re_atten_mask)
             valid_prob = torch.sigmoid(valid_output)
             valid_output = torch.squeeze(valid_output, 1)
             valid_loss = criterion(valid_output, valid_y)
@@ -140,10 +167,19 @@ def bench(args, model, device, valid_loader):
             valid_y = Variable(torch.from_numpy(np.array(valid_y)).float()).to(device)
             de_idx = torch.tensor(valid_de['input_ids']).to(device)
             de_mask = torch.tensor(valid_de['attention_mask']).to(device)
-            valid_re = {k: v.to(device) for k, v in valid_re.items() if k in ['input_ids', 'attention_mask']}
-            re_atten_mask = valid_re['attention_mask']
-            re_input_ids = valid_re['input_ids']
-            valid_output = model(valid_ds, de_idx, de_mask, valid_rs, re_input_ids, re_atten_mask)
+            if getattr(args, 'dna_adaptation', False):
+                valid_output = model(
+                    valid_ds,
+                    de_idx,
+                    de_mask,
+                    valid_rs,
+                    dna_embeddings=valid_re.to(device),
+                )
+            else:
+                valid_re = {k: v.to(device) for k, v in valid_re.items() if k in ['input_ids', 'attention_mask']}
+                re_atten_mask = valid_re['attention_mask']
+                re_input_ids = valid_re['input_ids']
+                valid_output = model(valid_ds, de_idx, de_mask, valid_rs, re_input_ids, re_atten_mask)
             valid_prob = torch.sigmoid(valid_output)
             valid_output = torch.squeeze(valid_output, 1)
             label = valid_y.to(device='cpu', dtype=torch.long).detach().numpy()

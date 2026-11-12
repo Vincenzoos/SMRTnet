@@ -23,10 +23,12 @@ smiles_char = ['@', '/', '#', '%', ')', '(', '+', '-', '.', '1', '0', '3', '2',
                'f', 'i', 'h', 'm', 'l', 'o', 'n', 's', 'r', 'u', 't', 'y']  #'\\'
 
 nucleic_char = ['A', 'U', 'C', 'G'] #4
+dna_nucleic_char = ['A', 'T', 'C', 'G']
 
 structure_char = ['.', '(',')']  # 3
 
 enc_protein = OneHotEncoder().fit(np.array(nucleic_char).reshape(-1, 1))
+enc_dna = OneHotEncoder().fit(np.array(dna_nucleic_char).reshape(-1, 1))
 enc_structure = OneHotEncoder().fit(np.array(structure_char).reshape(-1, 1))
 enc_structure2 =  LabelEncoder().fit(np.array(structure_char))
 
@@ -57,7 +59,9 @@ class data_process_loader(data.Dataset):
         if self.args.mode == "SEQ":
             sequence_endocing = self.df.iloc[index]['Sequence']
             sequence_endocing = [*sequence_endocing]
-            sequence_endocing = sequence_OneHot(sequence_endocing)
+            sequence_endocing = sequence_OneHot(
+                sequence_endocing, dna=bool(getattr(self.args, 'dna_adaptation', False))
+            )
             target_encoding = np.expand_dims(sequence_endocing, axis=2).transpose([2, 1, 0])
 
         elif self.args.mode=="SPU":
@@ -65,7 +69,9 @@ class data_process_loader(data.Dataset):
             sequence_endocing = [*sequence_endocing]
             structure_encoding = self.df.iloc[index]['Structure']
             structure_encoding = [*structure_encoding]
-            sequence_endocing = sequence_OneHot(sequence_endocing)
+            sequence_endocing = sequence_OneHot(
+                sequence_endocing, dna=bool(getattr(self.args, 'dna_adaptation', False))
+            )
             structure_encoding = structure_Label(structure_encoding)
             target_encoding = np.vstack((sequence_endocing,structure_encoding))
             target_encoding = np.expand_dims(target_encoding, axis=2).transpose([2, 1, 0])
@@ -91,8 +97,9 @@ class data_process_loader(data.Dataset):
 def drug_2_embed(x):
     return enc_drug.transform(np.array(x).reshape(-1, 1)).toarray().T
 
-def sequence_OneHot(x):
-    return enc_protein.transform(np.array(x).reshape(-1, 1)).toarray().T
+def sequence_OneHot(x, dna=False):
+    encoder = enc_dna if dna else enc_protein
+    return encoder.transform(np.array(x).reshape(-1, 1)).toarray().T
 
 def structure_OneHot(x):
     return enc_structure.transform(np.array(x).reshape(-1, 1)).toarray().T
